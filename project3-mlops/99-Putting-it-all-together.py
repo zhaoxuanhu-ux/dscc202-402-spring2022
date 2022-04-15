@@ -65,7 +65,12 @@ display(airbnbDF)
 
 # COMMAND ----------
 
+airbnbDF["price"]
+
+# COMMAND ----------
+
 # TODO
+airbnbDF["price"] = airbnbDF["price"].apply(lambda x: x.replace("$","").replace(",","")).astype(float)
 
 # COMMAND ----------
 
@@ -76,7 +81,54 @@ display(airbnbDF)
 
 # COMMAND ----------
 
-# TODO
+airbnbDF.info()
+
+# COMMAND ----------
+
+# MAGIC %md Firstly, I plot the correlation heatmap to see which numerical features should be droped.
+
+# COMMAND ----------
+
+import seaborn as sns
+import matplotlib.pyplot as plt
+ 
+plt.figure(figsize=(10,8))
+sns.heatmap(airbnbDF.corr(), cmap = "coolwarm")
+plt.show()
+
+# COMMAND ----------
+
+airbnbDF.corr()["price"]
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Based on the correlation and my own intuition, I would just retain latitude, accomodates, bathrooms, bedrooms, beds, number of reviews and 
+# MAGIC review_scores_rating
+
+# COMMAND ----------
+
+num_cols = ['latitude','accommodates','bathrooms', 'bedrooms', 'beds','number_of_reviews', 'review_scores_rating','price']
+
+# COMMAND ----------
+
+categorical_columns = [col for col in airbnbDF.columns if airbnbDF[col].dtype=='object']
+categorical_columns
+
+# COMMAND ----------
+
+airbnbDF = airbnbDF[num_cols+categorical_columns]
+
+# COMMAND ----------
+
+for i in categorical_columns:
+    print(airbnbDF[i].unique())
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Since these categorical variables are not ordinal, we just create label encoder for host_is_superhost and instant_bookable variables and 
+# MAGIC create dummy for the remaining categorical variables.
 
 # COMMAND ----------
 
@@ -87,6 +139,28 @@ display(airbnbDF)
 # COMMAND ----------
 
 # TODO
+airbnbDF['host_is_superhost'] = [1 if i == "t" else 0 if i=="f" else None for i in airbnbDF["host_is_superhost"]]
+airbnbDF['instant_bookable'] = [1 if i == "t" else 0 if i=="f" else None for i in airbnbDF["instant_bookable"]]
+
+# COMMAND ----------
+
+airbnbDF = pd.get_dummies(airbnbDF)
+ 
+X = airbnbDF.drop("price", axis=1)
+Y = airbnbDF['price']
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC Then I use KNN to impute the missing values
+
+# COMMAND ----------
+
+from sklearn.impute import KNNImputer
+ 
+imputer = KNNImputer(n_neighbors=3) 
+ 
+X = imputer.fit_transform(X)
 
 # COMMAND ----------
 
@@ -99,7 +173,7 @@ display(airbnbDF)
 
 # TODO
 from sklearn.model_selection import train_test_split
-
+X_train, X_test, Y_train, Y_test = train_test_split(X,Y,test_size = 0.3, random_state = 42)
 
 # COMMAND ----------
 
@@ -118,7 +192,15 @@ from sklearn.model_selection import train_test_split
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC Now I would just simply use linear regression to train my model.
+
+# COMMAND ----------
+
 # TODO
+from sklearn.linear_model import LinearRegression
+lr = LinearRegression()
+lr.fit(X_train, Y_train)
 
 # COMMAND ----------
 
@@ -128,6 +210,12 @@ from sklearn.model_selection import train_test_split
 # COMMAND ----------
 
 # TODO
+import numpy as np
+y_pred = lr.predict(X_test)
+y_pred
+
+from sklearn import metrics
+np.sqrt(metrics.mean_squared_error(Y_test, y_pred))
 
 # COMMAND ----------
 
@@ -139,13 +227,132 @@ from sklearn.model_selection import train_test_split
 
 # TODO
 import mlflow.sklearn
+from sklearn.linear_model import ElasticNet
+from sklearn.metrics import mean_squared_error
+with mlflow.start_run(run_name="Basic elastic net experiment") as run:
+  # Create model, train it, and create predictions
+  en = ElasticNet(random_state=42)
+  en.fit(X_train, Y_train)
+  predictions = en.predict(X_test)
+  
+  # Log model
+  mlflow.sklearn.log_model(en, "elastic-net-model")
+  
+  # Create metrics
+  mse = mean_squared_error(Y_test, predictions)
+  print(f"mse: {mse}")
+  
+  # Log metrics
+  mlflow.log_metric("mse", mse)
+  
+  runID = run.info.run_uuid
+  experimentID = run.info.experiment_id
+  
+  print(f"Inside MLflow Run with run_id `{runID}` and experiment_id `{experimentID}`")
 
+# COMMAND ----------
+
+def log_elastic_net(experimentID, run_name, params, X_train, X_test, Y_train, Y_test):
+  import os
+  import matplotlib.pyplot as plt
+  import mlflow.sklearn
+  import seaborn as sns
+  from sklearn.linear_model import ElasticNet
+  from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+  import tempfile
+
+  with mlflow.start_run(experiment_id=experimentID, run_name=run_name) as run:
+    # Create model, train it, and create predictions
+    en = ElasticNet(**params)
+    en.fit(X_train, Y_train)
+    predictions = en.predict(X_test)
+
+    # Log model
+    mlflow.sklearn.log_model(en, "elastic-net-model")
+
+    # Log params
+    mlflow.log_params(params)
+
+    # Create metrics
+    mse = mean_squared_error(Y_test, predictions)
+    mae = mean_absolute_error(Y_test, predictions)
+    r2 = r2_score(Y_test, predictions)
+
+    # Log metrics
+    mlflow.log_metrics({"mse": mse, "mae": mae, "r2": r2})
+    
+    # Create plot
+    fig, ax = plt.subplots()
+
+    sns.residplot(predictions, Y_test, lowess=True)
+    plt.xlabel("Predicted values for Price ($)")
+    plt.ylabel("Residual")
+    plt.title("Residual Plot")
+
+    # Log residuals using a temporary file
+    temp = tempfile.NamedTemporaryFile(prefix="residuals-", suffix=".png")
+    temp_name = temp.name
+    try:
+      fig.savefig(temp_name)
+      mlflow.log_artifact(temp_name, "residuals.png")
+    finally:
+      temp.close() # Delete the temp file
+      
+    display(fig)
+    return run.info.run_uuid
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC 
 # MAGIC Change and re-run the above 3 code cells to log different models and/or models with different hyperparameters until you are satisfied with the performance of at least 1 of them.
+
+# COMMAND ----------
+
+params = {
+  "alpha": 0.8,
+  "max_iter": 1000,
+  "l1_ratio": 0.5
+}
+
+log_elastic_net(experimentID, "Second Run", params, X_train, X_test, Y_train, Y_test)
+
+# COMMAND ----------
+
+params = {
+  "alpha": 0.6,
+  "max_iter": 1500,
+  "l1_ratio": 0.3
+}
+
+log_elastic_net(experimentID, "Third Run", params, X_train, X_test, Y_train, Y_test)
+
+# COMMAND ----------
+
+params = {
+  "alpha": 1,
+  "max_iter": 500,
+  "l1_ratio": 0.8
+}
+
+log_elastic_net(experimentID, "Fourth Run", params, X_train, X_test, Y_train, Y_test)
+
+# COMMAND ----------
+
+from  mlflow.tracking import MlflowClient
+
+client = MlflowClient()
+
+
+# COMMAND ----------
+
+runs = client.search_runs(experimentID, order_by=["attributes.start_time desc"])
+for i in runs:
+    print(i.data.metrics)
+
+# COMMAND ----------
+
+model_uri = "runs:/"+runs[1].info.run_id+"/elastic-net-model"
 
 # COMMAND ----------
 
@@ -157,6 +364,7 @@ import mlflow.sklearn
 
 # TODO
 import mlflow.pyfunc
+en_pyfunc_model = mlflow.pyfunc.load_pyfunc(model_uri)
 
 # COMMAND ----------
 
@@ -182,8 +390,12 @@ class Airbnb_Model(mlflow.pyfunc.PythonModel):
         self.model = model
     
     def predict(self, context, model_input):
-        # FILL_IN
-
+        y_pred = self.model.predict(model_input)
+        accomodates = model_input[:,1]
+        result = []
+        for i in range(y_pred.shape[0]):
+            result.append(y_pred[i]/accomodates[i])
+        return result
 
 # COMMAND ----------
 
@@ -192,10 +404,17 @@ class Airbnb_Model(mlflow.pyfunc.PythonModel):
 
 # COMMAND ----------
 
-# TODO
-final_model_path =  f"{working_path}/final-model"
+en = ElasticNet(alpha=0.6,max_iter=1500,l1_ratio=0.3)
+en.fit(X_train, Y_train)
+en_mse = mean_squared_error(Y_test, en.predict(X_test))
 
-# FILL_IN
+# COMMAND ----------
+
+# TODO
+final_model_path =  f"{working_path}/final-model-final-new"
+dbutils.fs.rm(final_model_path, True)
+en_postprocess_model = Airbnb_Model(model = en)
+mlflow.pyfunc.save_model(path=final_model_path.replace("dbfs:", "/dbfs"), python_model=en_postprocess_model)
 
 # COMMAND ----------
 
@@ -205,6 +424,10 @@ final_model_path =  f"{working_path}/final-model"
 # COMMAND ----------
 
 # TODO
+loaded_postprocess_model = mlflow.pyfunc.load_pyfunc(final_model_path.replace("dbfs:", "/dbfs"))
+
+# Apply the model
+loaded_postprocess_model.predict(X_test)
 
 # COMMAND ----------
 
@@ -222,11 +445,8 @@ final_model_path =  f"{working_path}/final-model"
 
 # COMMAND ----------
 
-# TODO
-save the testing data 
 test_data_path = f"{working_path}/test_data.csv"
-# FILL_IN
-
+pd.DataFrame(X_test).to_csv(test_data_path, index = False)
 prediction_path = f"{working_path}/predictions.csv"
 
 # COMMAND ----------
@@ -248,9 +468,9 @@ import pandas as pd
 @click.option("--test_data_path", default="", type=str)
 @click.option("--prediction_path", default="", type=str)
 def model_predict(final_model_path, test_data_path, prediction_path):
-    # FILL_IN
-
-
+    model = mlflow.pyfunc.load_pyfunc(final_model_path.replace("dbfs:", "/dbfs"))
+    predictions = model.predict(np.array(pd.read_csv(test_data_path)))
+    pd.DataFrame(predictions).to_csv(prediction_path, index=False)
 # test model_predict function    
 demo_prediction_path = f"{working_path}/predictions.csv"
 
@@ -281,13 +501,15 @@ conda_env: conda.yaml
 entry_points:
   main:
     parameters:
-      #FILL_IN
-    command:  "python predict.py #FILL_IN"
+      final_model_path: {type: str, default: "/dbfs/user/zhu21@ur.rochester.edu/mlflow/99_putting_it_all_together_psp/final-model-final-new"}
+      test_data_path: {type: text, default: "/dbfs/user/zhu21@ur.rochester.edu/mlflow/99_putting_it_all_together_psp/test_data.csv"}
+      prediction_path: {type: text, default: "/dbfs/user/zhu21@ur.rochester.edu/mlflow/99_putting_it_all_together_psp/predictions.csv"}
+    command:  "python predict.py --final_model_path {final_model_path} --test_data_path {test_data_path} --prediction_path {prediction_path}"
 '''.strip(), overwrite=True)
 
 # COMMAND ----------
 
-print(prediction_path)
+print(test_data_path)
 
 # COMMAND ----------
 
@@ -366,9 +588,12 @@ display( dbutils.fs.ls(workingDir) )
 
 # TODO
 second_prediction_path = f"{working_path}/predictions-2.csv"
-mlflow.projects.run(working_path,
-   # FILL_IN
-)
+mlflow.projects.run(uri=working_path,
+   parameters={
+    "final_model_path": final_model_path,
+    "test_data_path": test_data_path,
+    "prediction_path": second_prediction_path
+})
 
 # COMMAND ----------
 

@@ -54,8 +54,8 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import GridSearchCV
 
 # dictionary containing hyperparameter names and list of values we want to try
-parameters = {'n_estimators': #FILL_IN , 
-              'max_depth': #FILL_IN }
+parameters = {'n_estimators': [i for i in range(50, 200, 50)] , 
+              'max_depth': [i for i in range(5,25,5)] }
 
 rf = RandomForestRegressor()
 grid_rf_model = GridSearchCV(rf, parameters, cv=3)
@@ -77,20 +77,27 @@ for p in parameters:
 # TODO
 from sklearn.metrics import mean_squared_error
 
-with mlflow.start_run(run_name= FILL_IN) as run:
+with mlflow.start_run(run_name= "RF-Grid-Search") as run:
   # Create predictions of X_test using best model
-  # FILL_IN
+  params = {
+  "n_estimators": 150,
+  "max_depth": 15}
+  rf = RandomForestRegressor(**params)
+  rf.fit(X_train, y_train)
+  predictions = rf.predict(X_test)
   
   # Log model with name
-  # FILL_IN
+  mlflow.sklearn.log_model(rf, "grid-random-forest-model")
   
   # Log params
-  # FILL_IN
+  mlflow.log_params(params)
   
   # Create and log MSE metrics using predictions of X_test and its actual value y_test
-  # FILL_IN
+  mse = mean_squared_error(y_test, predictions)
+  mlflow.log_metric("mse", mse)
   
   runID = run.info.run_uuid
+  experimentID = run.info.experiment_id
   print("Inside MLflow Run with id {}".format(runID))
 
 # COMMAND ----------
@@ -110,7 +117,9 @@ with mlflow.start_run(run_name= FILL_IN) as run:
 # COMMAND ----------
 
 # TODO
-model = < FILL_IN >
+artifactURI = 'runs:/'+str(runID)+"/grid-random-forest-model"
+import mlflow.sklearn
+model = mlflow.sklearn.load_model(artifactURI)
 
 # COMMAND ----------
 
@@ -120,6 +129,39 @@ model = < FILL_IN >
 # COMMAND ----------
 
 # TODO
+parameters = {'n_estimators': [i for i in range(50, 450, 50)] , 
+              'max_depth': [i for i in range(5,60,10)] }
+
+rf = RandomForestRegressor()
+grid_rf_model = GridSearchCV(rf, parameters, cv=3)
+grid_rf_model.fit(X_train, y_train)
+best_rf_new = grid_rf_model.best_estimator_
+params = {}
+for p in parameters:
+    params[p] = best_rf_new.get_params()[p]
+print(params)
+
+with mlflow.start_run(run_name= "RF-Grid-Search-new") as run:
+  # Create predictions of X_test using best model
+  rf = RandomForestRegressor(**params)
+  rf.fit(X_train, y_train)
+  predictions = rf.predict(X_test)
+  
+  # Log model with name
+  mlflow.sklearn.log_model(rf, "grid-random-forest-model-new")
+  
+  # Log params
+  mlflow.log_params(params)
+  
+  # Create and log MSE metrics using predictions of X_test and its actual value y_test
+  mse = mean_squared_error(y_test, predictions)
+  mlflow.log_metric("mse", mse)
+  
+  runID = run.info.run_uuid
+  print("Inside MLflow Run with id {}".format(runID))
+
+artifactURI = 'runs:/'+str(runID)+"/grid-random-forest-model-new"
+model = mlflow.sklearn.load_model(artifactURI)
 
 # COMMAND ----------
 
@@ -129,6 +171,15 @@ model = < FILL_IN >
 # COMMAND ----------
 
 # TODO
+from  mlflow.tracking import MlflowClient
+client = MlflowClient()
+
+# COMMAND ----------
+
+experimentID = run.info.experiment_id
+runs = client.search_runs(experimentID)
+for r in runs:
+    print(r.data.metrics)
 
 # COMMAND ----------
 
