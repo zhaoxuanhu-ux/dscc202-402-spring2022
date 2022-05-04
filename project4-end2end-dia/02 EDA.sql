@@ -9,6 +9,9 @@
 -- MAGIC - **Token Transfers** - The most popular type of transaction on the Ethereum blockchain invokes a contract of type ERC20 to perform a transfer operation, moving some number of tokens from one 20-byte address to another 20-byte address. This table contains the subset of those transactions and has further processed and denormalized the data to make it easier to consume for analysis of token transfer events.
 -- MAGIC - **Contracts** - Some transactions create smart contracts from their input bytes, and this smart contract is stored at a particular 20-byte address. This table contains a subset of Ethereum addresses that contain contract byte-code, as well as some basic analysis of that byte-code. 
 -- MAGIC - **Logs** - Similar to the token_transfers table, the logs table contains data for smart contract events. However, it contains all log data, not only ERC20 token transfers. This table is generally useful for reporting on any logged event type on the Ethereum blockchain.
+-- MAGIC 
+-- MAGIC ### Rubric for this module
+-- MAGIC Answer the quetions listed below.
 
 -- COMMAND ----------
 
@@ -34,7 +37,9 @@
 
 -- COMMAND ----------
 
--- TBD
+-- MAGIC %sql
+-- MAGIC select *
+-- MAGIC from g06_db.block_date_test
 
 -- COMMAND ----------
 
@@ -128,7 +133,55 @@
 
 -- COMMAND ----------
 
--- TBD
+select distinct count(ethereumetl.token_transfers.transaction_hash)
+from ethereumetl.token_transfers
+
+-- COMMAND ----------
+
+select count(ethereumetl.token_transfers.transaction_hash)
+from ethereumetl.token_transfers
+
+-- COMMAND ----------
+
+-- MAGIC %sql
+-- MAGIC show tables in ethereumetl
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC token_address_symbol_price = spark.sql('select * from ethereumetl.tokens INNER JOIN ethereumetl.token_prices_usd ON ethereumetl.tokens.symbol = ethereumetl.token_prices_usd.symbol')
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC token_address_symbol_price = token_address_symbol_price.drop(token_address_symbol_price.columns[1])
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC token_address_symbol_price = token_address_symbol_price.drop(token_address_symbol_price.columns[1])
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC token_address_symbol_price_silver_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/tstables1/"
+-- MAGIC dbutils.fs.mkdirs(token_address_symbol_price_silver_delta_dir)
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC token_address_symbol_price.write.format("delta").mode("overwrite").save(token_address_symbol_price_silver_delta_dir)
+
+-- COMMAND ----------
+
+-- MAGIC %python
+-- MAGIC spark.sql(
+-- MAGIC     f"""
+-- MAGIC CREATE TABLE token_address_symbol_price
+-- MAGIC USING DELTA
+-- MAGIC LOCATION "{token_address_symbol_price_silver_delta_dir}"
+-- MAGIC """
+-- MAGIC )
 
 -- COMMAND ----------
 
