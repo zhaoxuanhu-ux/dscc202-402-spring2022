@@ -68,7 +68,12 @@ erc20_contract = silvercontractDF.filter(silvercontractDF["is_erc20"]==True)
 
 # COMMAND ----------
 
-erc20_contract.repartition(1).write.format("delta").mode("overwrite").save(BASE_DELTA_PATH)
+erc20_contract_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/ectables/"
+dbutils.fs.mkdirs(erc20_contract_delta_dir)
+
+# COMMAND ----------
+
+erc20_contract.write.format("delta").mode("overwrite").save(erc20_contract_delta_dir)
 
 # COMMAND ----------
 
@@ -76,7 +81,7 @@ spark.sql(
     f"""
 CREATE TABLE erc20_contract
 USING DELTA
-LOCATION "{BASE_DELTA_PATH}"
+LOCATION "{erc20_contract_delta_dir}"
 """
 )
 
@@ -86,7 +91,7 @@ erc20_token_transfer = tokentransferDF.join(silvercontractDF, tokentransferDF.to
 
 # COMMAND ----------
 
-token_transfer_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/tftables/"
+token_transfer_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/ettables/"
 dbutils.fs.mkdirs(token_transfer_delta_dir)
 
 # COMMAND ----------
@@ -105,170 +110,31 @@ LOCATION "{token_transfer_delta_dir}"
 
 # COMMAND ----------
 
-transaction = transactionDF.select("hash",col("from_address").alias("transaction_from_address"),col("to_address").alias("transaction_to_address"),col("value").alias("transaction_value"),"gas","gas_price")
-
-# COMMAND ----------
-
 erc20_tokentransferDF = spark.sql("select * from G06_db.erc20_token_transfer")
 
 # COMMAND ----------
 
-block_select = blockDF.filter(from_unixtime(col("timestamp"),"yyyy-mm-dd HH:mm:ss")>=start_date)
+send_value = erc20_tokentransferDF.groupBy("token_address","from_address").agg(sum("value").alias("send_value")).withColumn("address",col("from_address"))
 
 # COMMAND ----------
 
-erc20_token_transfer_block = erc20_tokentransferDF.join(block_select,erc20_tokentransferDF.block_number==block_select.number,"inner")
+receive_value = erc20_tokentransferDF.groupBy("token_address","to_address").agg(sum("value").alias("receive_value")).withColumn("address",col("to_address"))
 
 # COMMAND ----------
 
-erc20_token_transfer_block = erc20_token_transfer_block.select("token_address","from_address","to_address","value","transaction_hash","block_number","timestamp","difficulty","total_difficulty","gas_limit","gas_used","transaction_count")
+balance = send_value.join(receive_value, ["token_address", "address"], "inner").withColumn("balance", col("receive_value")-col("send_value"))
 
 # COMMAND ----------
 
-display(erc20_token_transfer_block)
+display(balance)
 
 # COMMAND ----------
 
-erc20_token_transfer_block_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/ettbtables/"
-dbutils.fs.mkdirs(erc20_token_transfer_block_delta_dir)
+wallet_balance = balance.select("token_address",col("address").alias("wallet"),"balance")
 
 # COMMAND ----------
 
-erc20_token_transfer_block.write.format("delta").mode("overwrite").save(erc20_token_transfer_block_delta_dir)
-
-# COMMAND ----------
-
-spark.sql(
-    f"""
-CREATE TABLE erc20_token_transfer_block
-LOCATION "{erc20_token_transfer_block_delta_dir}"
-"""
-)
-
-# COMMAND ----------
-
-erc_token_transfer_blockDF = spark.sql("select * from G06_db.erc20_token_transfer_block")
-
-# COMMAND ----------
-
-tokenDF_clean = tokenDF.select("address","symbol","name","total_supply")
-tokenpriceDF_clean = tokenpriceDF.select("id",col("symbol").alias("token_symbol"),col("name").alias("token_name"),"asset_platform_id","contract_address","sentiment_votes_up_percentage","sentiment_votes_down_percentage","market_cap_rank","coingecko_rank","coingecko_score","developer_score","community_score","liquidity_score","public_interest_score","price_usd")
-
-# COMMAND ----------
-
-erc20_token_transfer_silver = erc_token_transfer_blockDF.join(tokenDF_clean, erc_token_transfer_blockDF.token_address==tokenDF_clean.address,how="left").join(tokenpriceDF_clean,tokenDF_clean.symbol==tokenpriceDF_clean.token_symbol,how="left").drop("token_symbol","token_name")
-
-# COMMAND ----------
-
-#
-erc20_tokentransfer_transaction = erc20_tokentransferDF.join(transaction, erc20_tokentransferDF.transaction_hash==transaction.hash,"inner")
-
-# COMMAND ----------
-
-#
-display(erc20_tokentransfer_transaction)
-
-# COMMAND ----------
-
-token_transaction_count = erc20_tokentransferDF.select("token_address","transaction_hash").groupBy("token_address").agg(count("transaction_hash").alias("transaction_counts"))
-
-# COMMAND ----------
-
-display(token_transaction_count)
-
-# COMMAND ----------
-
-token_transaction_count_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/ttctables/"
-dbutils.fs.mkdirs(token_transaction_count_delta_dir)
-
-# COMMAND ----------
-
-token_transaction_count.write.format("delta").mode("overwrite").save(token_transaction_count_delta_dir)
-
-# COMMAND ----------
-
-spark.sql(
-    f"""
-CREATE TABLE erc20_token_transfer_transaction_count
-USING DELTA
-LOCATION "{token_transaction_count_delta_dir}"
-"""
-)
-
-# COMMAND ----------
-
-tokenDF_clean = tokenDF.select("address","symbol","name","total_supply")
-
-# COMMAND ----------
-
-token_tokentransfer = spark.sql("select * from G06_db.token_transfer_block left join ethereumetl.tokens on G06_db.token_transfer_block.token_address==ethereumetl.tokens.address")
-
-# COMMAND ----------
-
-token_tokentransfer = token_tokentransfer.drop("address","decimals")
-
-# COMMAND ----------
-
-display(token_tokentransfer)
-
-# COMMAND ----------
-
-tokenpriceDF_clean = tokenpriceDF.select("id",col("symbol").alias("token_symbol"),col("name").alias("token_name"),"asset_platform_id","contract_address","sentiment_votes_up_percentage","sentiment_votes_down_percentage","market_cap_rank","coingecko_rank","coingecko_score","developer_score","community_score","liquidity_score","public_interest_score","price_usd")
-
-# COMMAND ----------
-
-token_transfer_silver = token_tokentransfer.join(tokenpriceDF_clean, token_tokentransfer.token_address==tokenpriceDF_clean.contract_address,how="left").drop("token_symbol","token_name")
-
-# COMMAND ----------
-
-token_transfer_silver_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/tfstables/"
-dbutils.fs.mkdirs(token_transfer_silver_delta_dir)
-
-# COMMAND ----------
-
-display(token_transfer_silver)
-
-# COMMAND ----------
-
-token_transfer_silver.write.format("delta").mode("overwrite").save(token_transfer_silver_delta_dir)
-
-# COMMAND ----------
-
-spark.sql(
-    f"""
-CREATE TABLE token_transfer_silver
-USING DELTA
-LOCATION "{token_transfer_silver_delta_dir}"
-"""
-)
-
-# COMMAND ----------
-
-token_tokentransferDF = spark.sql("select * from G06_db.token_tokentransfer")
-
-# COMMAND ----------
-
-send_value = erc20_tokentransferDF.groupBy("from_address").sum("value")
-
-# COMMAND ----------
-
-send_value = send_value.select("from_address",col("sum(value)").alias("send_value"))
-
-# COMMAND ----------
-
-receive_value = erc20_tokentransferDF.groupBy("to_address").sum("value")
-
-# COMMAND ----------
-
-receive_value = receive_value.select("to_address",col("sum(value)").alias("receive_value"))
-
-# COMMAND ----------
-
-wallet_balance = send_value.join(receive_value, send_value.from_address==receive_value.to_address,"inner").withColumn("balance",col("receive_value")-col("send_value")).select(col("to_address").alias("wallet"),"balance")
-
-# COMMAND ----------
-
-wallet_balance_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/wbtables/"
+wallet_balance_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/newtables/"
 dbutils.fs.mkdirs(wallet_balance_delta_dir)
 
 # COMMAND ----------
@@ -279,93 +145,128 @@ wallet_balance.write.format("delta").mode("overwrite").save(wallet_balance_delta
 
 spark.sql(
     f"""
-CREATE TABLE wallet_balance
-USING DELTA
+CREATE TABLE wallet_balance_silver
 LOCATION "{wallet_balance_delta_dir}"
 """
 )
 
 # COMMAND ----------
 
-tokenDF_clean = tokenDF.select("address","symbol","name","decimals","total_supply")
-tokenpriceDF_clean = tokenpriceDF.select("id",col("symbol").alias("token_symbol"),col("name").alias("token_name"),"asset_platform_id","contract_address","sentiment_votes_up_percentage","sentiment_votes_down_percentage","market_cap_rank","coingecko_rank","coingecko_score","developer_score","community_score","liquidity_score","public_interest_score","price_usd")
+token_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/tokentables/"
+dbutils.fs.mkdirs(token_delta_dir)
 
 # COMMAND ----------
 
-token_transfer_silver = erc20_tokentransferDF.join(tokenDF_clean,erc20_tokentransferDF.token_address==tokenDF_clean.address,how="left").join(tokenpriceDF_clean,tokenDF_clean.symbol==tokenpriceDF_clean.token_symbol, how="left").drop("token_symbol","token_name","address","log_index","is_erc20")
-
-# COMMAND ----------
-
-erc20token_transfer_silver_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/ettstables/"
-dbutils.fs.mkdirs(erc20_token_transfer_silver_delta_dir)
-
-# COMMAND ----------
-
-token_transfer_silver.write.format("delta").mode("overwrite").save(erc20_token_transfer_silver_delta_dir)
+tokenDF.write.format("delta").mode("overwrite").save(token_delta_dir)
 
 # COMMAND ----------
 
 spark.sql(
     f"""
-CREATE TABLE erc20_token_transfer_silver
-USING DELTA
-LOCATION "{erc20_token_transfer_silver_delta_dir}"
+CREATE TABLE token
+LOCATION "{token_delta_dir}"
 """
 )
 
 # COMMAND ----------
 
-tokentransfer_simple = erc20_tokentransfer_transaction.select("token_address","from_address","value")
-token_transfer_silver = tokentransfer_simple.join(token_transaction_count,tokentransfer_simple.token_address==token_transaction_count.address,how="left").join(balance,tokentransfer_simple.from_address==balance.wallet,how="left").select("token_address","wallet","balance","transaction_counts").drop_duplicates()
+token_price_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/tokenpricetables/"
+dbutils.fs.mkdirs(token_price_delta_dir)
 
 # COMMAND ----------
 
-tokentransfer_silver_delta_dir = f"/mnt/dscc202-datasets/misc/G06/tokenrec/tstables/"
-dbutils.fs.mkdirs(tokentransfer_silver_delta_dir)
-
-# COMMAND ----------
-
-dbutils.fs.ls(tokentransfer_silver_delta_dir)
-
-# COMMAND ----------
-
-token_transfer_silver.write.format("delta").mode("overwrite").save(tokentransfer_silver_delta_dir)
+tokenpriceDF.write.format("delta").mode("overwrite").save(token_price_delta_dir)
 
 # COMMAND ----------
 
 spark.sql(
     f"""
-CREATE TABLE token_transfer_silver
-USING DELTA
-LOCATION "{tokentransfer_silver_delta_dir}"
+CREATE TABLE token_price
+LOCATION "{token_price_delta_dir}"
 """
 )
 
 # COMMAND ----------
 
-block_silver = blockDF.join(transactionDF, blockDF.hash==transaction.block_hash, how="right").select("")
+block_silver=blockDF.withColumn("timestamp", from_unixtime(col("timestamp"),"yyyy-MM-dd HH:mm:ss"))
 
 # COMMAND ----------
 
-dbutils.fs.ls(BASE_DELTA_PATH)
+block_delta_dir = f'/mnt/dscc202-datasets/misc/G06/tokenrec/blockstables/'
+dbutils.fs.mkdirs(block_delta_dir)
 
 # COMMAND ----------
 
-block_silver.write.format("delta").mode("overwrite").save(BASE_DELTA_PATH)
+block_silver.write.format('delta').mode("overwrite").save(block_delta_dir)
 
 # COMMAND ----------
 
 spark.sql(
+    """
+DROP TABLE IF EXISTS g06_db.block_silver
+"""
+)
+ 
+spark.sql(
     f"""
-CREATE TABLE block_silver
+CREATE TABLE g06_db.block_silver
 USING DELTA
-LOCATION "{BASE_DELTA_PATH}"
+LOCATION "/mnt/dscc202-datasets/misc/G06/tokenrec/blockstables/"
 """
 )
 
 # COMMAND ----------
 
-dbutils.fs.ls(BASE_DELTA_PATH)
+erc20_tokentransfer = spark.sql("select token_address,from_address,to_address,value from g06_db.erc20_token_transfer")
+
+# COMMAND ----------
+
+sell=erc20_tokentransfer.groupBy(['from_address','token_address']).count()
+
+# COMMAND ----------
+
+sell=sell.select("from_address",col('token_address').alias("token_address_sell"),col('count').alias('sell_count'))
+
+# COMMAND ----------
+
+buy=erc20_tokentransfer.groupBy(['to_address','token_address']).count()
+
+# COMMAND ----------
+
+buy=buy.select("to_address",col('token_address').alias("token_address_buy"),col('count').alias('buy_count'))
+
+# COMMAND ----------
+
+wallet_count=buy.join(sell,(sell.from_address==buy.to_address) & (sell.token_address_sell==buy.token_address_buy))
+
+# COMMAND ----------
+
+wallet_count=wallet_count.select(col('to_address').alias('wallet_address'),col("token_address_buy").alias('token_address'),"buy_count",'sell_count')
+
+# COMMAND ----------
+
+wallet_count_delta_dir = f'/mnt/dscc202-datasets/misc/G06/tokenrec/wctables/'
+dbutils.fs.mkdirs(wallet_count_delta_dir)
+
+# COMMAND ----------
+
+wallet_count.write.format('delta').mode("overwrite").save(wallet_count_delta_dir)
+
+# COMMAND ----------
+
+spark.sql(
+    """
+DROP TABLE IF EXISTS g06_db.wallet_count
+"""
+)
+ 
+spark.sql(
+    f"""
+CREATE TABLE g06_db.wallet_count
+USING DELTA
+LOCATION "/mnt/dscc202-datasets/misc/G06/tokenrec/wctables/"
+"""
+)
 
 # COMMAND ----------
 
